@@ -1,0 +1,397 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 String              @id @default(cuid())
+  email              String              @unique
+  name               String?
+  passwordHash       String?
+  role               Role                @default(SUPERINTENDENT)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  activityLogs       ActivityLog[]
+  projectAssignments ProjectAssignment[]
+  authoredReports    Report[]            @relation("ReportAuthor")
+  accounts           Account[]
+  sessions           Session[]
+}
+
+model Project {
+  id                  String                    @id @default(cuid())
+  code                String                    @unique
+  name                String
+  region              Region
+  tenant              String?
+  jobNumber           String?                   // Job number from cost reports (Column A) - legacy
+  projectNumber       String?                   // Primary project number from cost reports (Column B) - for backward compatibility
+  startDate           DateTime
+  scheduledCompletion DateTime?
+  projectBudget       Decimal                   @db.Decimal(12, 2)
+  eac                 Decimal                   @db.Decimal(12, 2)
+  budgetVariance      Decimal?                  @db.Decimal(12, 2)
+  budgetVarianceNote  String?
+  percentComplete     Float                     @default(0)
+  statusNote          String?
+  tags                String[]
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  projectAssignments  ProjectAssignment[]
+  customFields        ProjectCustomField[]
+  customFieldValues   ProjectCustomFieldValue[]
+  reports             Report[]
+  financials          ProjectFinancials[]       // Financial data by period
+  projectNumbers      ProjectProjectNumber[]    // Multiple project numbers associated with this project
+  
+  @@index([projectNumber])
+}
+
+// Join table for multiple project numbers per project
+model ProjectProjectNumber {
+  id            String   @id @default(cuid())
+  projectId     String
+  projectNumber String   // Project number from cost report (Column B)
+  source        String?  // Source: 'weekly_report', 'cost_report', 'manual'
+  notes         String?  // Optional notes about this mapping
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  @@unique([projectId, projectNumber])
+  @@index([projectId])
+  @@index([projectNumber])
+}
+
+model ProjectAssignment {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([userId])
+  @@index([projectId])
+}
+
+model Report {
+  id                String                        @id @default(cuid())
+  projectId         String
+  reportDate        DateTime
+  reportType        ReportType
+  workPerformed     String?
+  safety            String?
+  safetyType        SafetyType?
+  totalTradeWorkers Int?
+  authorId          String
+  createdAt         DateTime                      @default(now())
+  updatedAt         DateTime                      @updatedAt
+  source            String?
+  architect         String?
+  sabeyProjectStaff String[]
+  // Cost data snapshot at time of report (for historical accuracy)
+  reportBudget      Decimal?                      @db.Decimal(12, 2)
+  reportEac         Decimal?                      @db.Decimal(12, 2)
+  reportVariance    Decimal?                      @db.Decimal(12, 2)
+  jobNumber         String?                       // Job number from cost report (Column A)
+  projectNumber     String?                       // Project number from cost report (Column B)
+  author            User                          @relation("ReportAuthor", fields: [authorId], references: [id])
+  project           Project                       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  attachments       ReportAttachment[]
+  customFieldValues ReportCustomFieldValue[]
+  activities        ReportSubcontractorActivity[]
+
+  @@index([projectId])
+  @@index([reportDate])
+  @@index([reportType])
+}
+
+model ReportSubcontractorActivity {
+  id              String               @id @default(cuid())
+  reportId        String
+  subcontractorId String
+  craftId         String
+  tradeWorkers    Int?
+  notes           String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  source          String?
+  craft           Craft                @relation(fields: [craftId], references: [id])
+  report          Report               @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  subcontractor   SubcontractorCompany @relation(fields: [subcontractorId], references: [id])
+
+  @@index([reportId])
+  @@index([subcontractorId])
+}
+
+model ReportAttachment {
+  id         String   @id @default(cuid())
+  reportId   String
+  fileName   String
+  fileUrl    String
+  fileSize   Int
+  mimeType   String
+  uploadedAt DateTime @default(now())
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+}
+
+model SubcontractorCompany {
+  id            String                        @id @default(cuid())
+  name          String                        @unique
+  shortName     String?
+  createdAt     DateTime                      @default(now())
+  updatedAt     DateTime                      @updatedAt
+  activities    ReportSubcontractorActivity[]
+  contacts      SubcontractorContact[]
+  defaultCrafts SubcontractorCraft[]
+}
+
+model SubcontractorCraft {
+  id              String               @id @default(cuid())
+  subcontractorId String
+  craftId         String
+  craft           Craft                @relation(fields: [craftId], references: [id])
+  subcontractor   SubcontractorCompany @relation(fields: [subcontractorId], references: [id], onDelete: Cascade)
+
+  @@unique([subcontractorId, craftId])
+  @@index([subcontractorId])
+}
+
+model SubcontractorContact {
+  id              String               @id @default(cuid())
+  subcontractorId String
+  name            String
+  phone           String?
+  email           String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  subcontractor   SubcontractorCompany @relation(fields: [subcontractorId], references: [id], onDelete: Cascade)
+
+  @@index([subcontractorId])
+}
+
+model Craft {
+  id                  String                        @id @default(cuid())
+  name                String                        @unique
+  createdAt           DateTime                      @default(now())
+  activities          ReportSubcontractorActivity[]
+  subcontractorCrafts SubcontractorCraft[]
+}
+
+model ProjectCustomField {
+  id         String                    @id @default(cuid())
+  projectId  String
+  label      String
+  type       CustomFieldType
+  required   Boolean                   @default(false)
+  options    String[]
+  visibility Json?
+  createdAt  DateTime                  @default(now())
+  updatedAt  DateTime                  @updatedAt
+  project    Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  values     ProjectCustomFieldValue[]
+
+  @@index([projectId])
+}
+
+model ProjectCustomFieldValue {
+  id        String             @id @default(cuid())
+  fieldId   String
+  projectId String
+  value     String
+  updatedAt DateTime           @updatedAt
+  field     ProjectCustomField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  project   Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([fieldId, projectId])
+  @@index([projectId])
+}
+
+model ReportCustomField {
+  id         String                   @id @default(cuid())
+  projectId  String
+  label      String
+  type       CustomFieldType
+  required   Boolean                  @default(false)
+  options    String[]
+  visibility Json?
+  createdAt  DateTime                 @default(now())
+  updatedAt  DateTime                 @updatedAt
+  values     ReportCustomFieldValue[]
+
+  @@index([projectId])
+}
+
+model ReportCustomFieldValue {
+  id        String            @id @default(cuid())
+  fieldId   String
+  reportId  String
+  value     String
+  updatedAt DateTime          @updatedAt
+  field     ReportCustomField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  report    Report            @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([fieldId, reportId])
+  @@index([reportId])
+}
+
+model ImportMapping {
+  id            String   @id @default(cuid())
+  projectId     String?
+  name          String
+  headerMapping Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([projectId])
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  entityType String
+  entityId   String
+  changes    Json?
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+enum Role {
+  SUPERINTENDENT
+  PM
+  EXECUTIVE
+  ADMIN
+}
+
+enum Region {
+  ASHBURN
+  SEATTLE
+  AUSTIN
+  COLUMBIA
+  QUINCY
+  MANHATTAN
+  UMATILLA
+  BUTTE
+  NON_SDC
+}
+
+enum ReportType {
+  WEEKLY
+}
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  CURRENCY
+  DATE
+  SELECT
+  MULTISELECT
+  CHECKBOX
+}
+
+enum SafetyType {
+  NONE_TO_REPORT
+  TOOL_BOX_TALK_PPE
+  INCIDENT
+  NEAR_MISS
+  AUDIT
+}
+
+model CostReport {
+  id          String   @id @default(cuid())
+  fileName    String   // Original filename (e.g., "Cost Report Summary 10.15.25.xlsx")
+  filePath    String   // Full path to the file
+  fileSize    Int      // File size in bytes
+  reportDate  DateTime // Date the report represents (extracted from filename or file)
+  uploadedAt  DateTime @default(now())
+  uploadedBy  String?  // User ID who uploaded it (optional for now)
+  isActive    Boolean  @default(true) // Whether this is the current/latest report
+  notes       String?  // Optional notes about this report
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@unique([fileName])
+  @@index([reportDate])
+  @@index([isActive])
+  @@index([uploadedAt])
+}
+
+model ProjectFinancials {
+  id            String   @id @default(cuid())
+  projectId     String
+  periodStart   DateTime // Start date of the reporting period (e.g., week start)
+  periodEnd     DateTime? // End date of the reporting period (optional)
+  // Core financial fields
+  budget        Decimal? @db.Decimal(12, 2) // Total Budget
+  forecast      Decimal? @db.Decimal(12, 2) // Forecasted Cost @ Completion (EAC)
+  actual        Decimal? @db.Decimal(12, 2) // Actual costs
+  committed     Decimal? @db.Decimal(12, 2) // Committed costs
+  spent         Decimal? @db.Decimal(12, 2) // Spent/Invoiced
+  variance      Decimal? @db.Decimal(12, 2) // Variance (Over)/Under
+  // Additional fields stored as JSON for flexibility
+  rawJson       Json?    // All other financial columns from Excel
+  // Metadata
+  sourceFile    String?  // Source cost report file name
+  sourceDate    DateTime? // Date from the source cost report
+  jobNumber     String?  // Job number from cost report (Column A)
+  projectNumber String?  // Project number from cost report (Column B)
+  matchType     String?  // How this row was matched: "job" | "name"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  @@unique([projectId, periodStart])
+  @@index([projectId])
+  @@index([periodStart])
+  @@index([jobNumber])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
